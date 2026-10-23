@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# dotdot — the single entry point, artisan style.
+#
+# Every "dot-*.sh" script in dotdot's bin directory, this one aside, is a
+# command, named after its file minus the "dot-" prefix: "dot-decision-update.sh"
+# is "decision:update", and a third part is a variant of the command, given as
+# its first argument ("dot-schema-dump-mysql.sh" is "schema:dump mysql").
+# Adding a script adds a command; nothing to register.
+#
+# A kit's scripts, in .tooling/kits/<kit>/bin/, are named the same
+# way and run under the kit's name: "dot-code-references.sh" of the laravel
+# kit is "laravel:code:references".
+#
+# Arguments after the command go to the script untouched, so every script's
+# own --help is the command's help.
+
+set -euo pipefail
+
+. "$(dirname -- "$(realpath -- "$0")")/lib/dot-paths.sh"
+
+ME="./dot"
+SELF=$(realpath -- "$0")
+COMMAND_PATTERN='^[a-z][a-z0-9]*(:[a-z][a-z0-9]*){0,2}$'
+VARIANT_PATTERN='^[a-z0-9][a-z0-9-]*$'
+
+if [ -t 1 ]; then
+  BOLD=$'\033[1m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; RESET=$'\033[0m'
+else
+  BOLD=""; GREEN=""; YELLOW=""; RESET=""
+fi
+
+die() {
+  echo "❌ $*" >&2
+  exit 1
+}
+
+# Prints "<prefix><command>|<variant>|<file>" for every script in $1.
+scripts_in() {
+  local file base group name variant
+  for file in "$1"/dot-*.sh; do
+    [ -f "$file" ] || continue
+    [ "$(realpath -- "$file")" != "$SELF" ] || continue
+    base=$(basename -- "$file" .sh)
+    base=${base#dot-}
+    group=${base%%-*}
+    name=""
+    variant=""
+    if [ "$base" != "$group" ]; then
+      name=${base#*-}
+      if [ "$name" != "${name%%-*}" ]; then
+        variant=${name#*-}
+        name=${name%%-*}
+      fi
+    fi
+    printf '%s|%s|%s\n' "$2$group${name:+:$name}" "$variant" "$file"
+  done
+}
+
+# Prints "<command>|<variant>|<file>" for every core and kit script,
+# sorted by command.
+commands() {
+  local dir
+  {
+    scripts_in "$BIN_DIR" ""
+    for dir in "$KITS_DIR"/*/bin; do
+      [ -d "$dir" ] || continue
+      scripts_in "$dir" "$(basename -- "$(dirname -- "$dir")"):"
+    done
+  } | sort
+}
+
+# The one-line "# description:" every script declares near its top.
+description() {
+  sed -n 's/^# description: //p' "$1" | head -n 1
+}
+
+list() {
+  printf '%sdotdot%s commands. Every command answers --help.\n\n' "$BOLD" "$RESET"
+  printf '%sUsage:%s\n  %s <command> [variant] [arguments]\n  %s help <command> [variant]\n\n' "$YELLOW" "$RESET" "$ME" "$ME"
+  printf '%sAvailable commands:%s\n' "$YELLOW" "$RESET"
+  local command variant file group last_group="" label
+  while IFS='|' read -r command variant file; do
+    group=${command%%:*}
+    if [ "$command" != "$group" ] && [ "$group" != "$last_group" ]; then
+      printf ' %s%s%s\n' "$YELLOW" "$group" "$RESET"
+    fi
+    last_group=$group
+    label="$command${variant:+ $variant}"
+    printf '  %s%-30s%s %s\n' "$GREEN" "$label" "$RESET" "$(description "$file")"
+  done < <(commands | awk -F '|' '{ print ($1 ~ /:/ ? 1 : 0) "|" $0 }' | sort | cut -d '|' -f 2-)
+}
+
+# Prints the variants a command takes, one per line, or nothing.
+variants_of() {
+  commands | awk -F '|' -v c="$1" '$1 == c && $2 != "" { print $2 }'
+}
+
+# Prints the script a command (and variant) runs, or fails.
+script_of() {
+  commands | awk -F '|' -v c="$1" -v v="$2" '$1 == c && $2 == v { print $3; found = 1; exit } END { exit !found }'
+}
+
+run() {
+  local command="$1"
+  shift
+  [[ "$command" =~ $COMMAND_PATTERN ]] || die "invalid command: $command. Run $ME to list them."
+
+  local variant="" script variants
+  if ! script=$(script_of "$command" ""); then
+    variants=$(variants_of "$command")
+    [ -n "$variants" ] || die "unknown command: $command. Run $ME to list them."
+    if [ $# -eq 0 ] || [[ ! "${1-}" =~ $VARIANT_PATTERN ]]; then
+      echo "$command needs one of: $(printf '%s' "$variants" | tr '\n' ' ')" >&2
+      echo "Run $ME help $command <variant> for its help." >&2
+      exit 1
+    fi
+    variant=$1
+    shift
+    script=$(script_of "$command" "$variant") \
+      || die "unknown $command variant: $variant. Available: $(printf '%s' "$variants" | tr '\n' ' ')"
+  fi
+
+  # Every script is bash; running it through bash means a missing exec bit
+  # never stops a command.
+  exec bash "$script" "$@"
+}
+
+case "${1-}" in
+  ''|list|-h|--help) list ;;
+  help)
+    shift
+    [ $# -gt 0 ] || { list; exit 0; }
+    command=$1
+    shift
+    run "$command" "$@" --help
+    ;;
+  *) run "$@" ;;
+esac

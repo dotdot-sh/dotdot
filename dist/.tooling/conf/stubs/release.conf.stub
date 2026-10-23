@@ -1,0 +1,7 @@
+RELEASE_DESTINATION=.ignore/release
+RELEASE_EXCLUDE_FILE_LIST=release.exclude
+RELEASE_BRANCH=main
+
+# Release repository remotes, lowercasing text after `RELEASE_REMOTE_`.
+RELEASE_REMOTE_GITHUB=https://github.com/_USER_/_REPO_.git
+RELEASE_REMOTE_HUGGINGFACE=https://huggingface.co/spaces/_USER_/_REPO_

@@ -1,0 +1,13 @@
+{
+  "minimumVersion": "v2.1.294",
+  "disableClaudeAiConnectors": true,
+  "autoMemoryDirectory": "/_PROJECT_DIR_/.dot/.tooling/claude/memory",
+  "permissions": {
+    "deny": [
+      "Read(./vendor/**)"
+    ],
+    "allow": [
+      "Read(./vendor/**)"
+    ]
+  }
+}
