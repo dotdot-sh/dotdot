@@ -37,4 +37,4 @@ If long, extensive, or detailed reporting is necessary, create a structured Repo
 
 ## Onboarding
 
-Start by onboarding yourself by invoking the `dot-onboarding` skill, specially if the first message is "hey".
+Start by onboarding yourself by invoking the `dot-onboard` skill, specially if the first message is "hey".

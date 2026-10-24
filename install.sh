@@ -2,16 +2,12 @@
 # install.sh — install dotdot into the current folder.
 #
 # Downloads dotdot from the repo's main branch, places its dist/ here as
-# .dot/, seeds the project root from dotdot's conf/stubs/ (never over an
-# existing file; ".env.stub" is appended to dotdot's .dot/.env), links dotdot's entry point
-# as ./dot and runs dot sync -y. Nothing that already exists is
-# overwritten: an existing .dot/ or dotdot stops the install untouched.
-#
-# It asks one question, on the terminal even when piped from curl: whether to
-# keep the release features. No (the default, and the answer without a
-# terminal) removes the release commands and seeds none of their stubs.
-# Output stays quiet: two progress lines, then the result; a failing step
-# shows its output.
+# .dot/, links dotdot's entry point as ./dot, and runs dot sync -y. Nothing
+# that already exists is overwritten: an existing .dot/ or dot stops the
+# install untouched. Plugins are never installed here: add the ones you trust
+# afterwards with bash dot plugins:add <owner>/<name>.
+# Output stays quiet: progress lines, then the result; a failing step shows
+# its output.
 
 set -euo pipefail
 
@@ -21,23 +17,17 @@ ARCHIVE_URL="https://github.com/$REPO/archive/refs/heads/$BRANCH.tar.gz"
 SOURCE_DIR="dist"
 DOTDOT_DIR=".dot"
 ENTRY_LINK="dot"
-ENTRY_POINT="$DOTDOT_DIR/.tooling/bin/dot"
-PATHS_LIB=".tooling/bin/lib/dot-paths.sh"
-STUBS_DIR="$DOTDOT_DIR/.tooling/conf/stubs"
-VERSION_FILE="$DOTDOT_DIR/.tooling/conf/version"
-ENV_STUB_NAME=".env"
+ENTRY_POINT="$DOTDOT_DIR/.core/system/bin/dot"
+BOOT_FILE=".core/system/boot.sh"
+VERSION_FILE="$DOTDOT_DIR/.core/version"
 ENV_FILE="$DOTDOT_DIR/.env"
-RELEASE_FILES=(
-  .tooling/bin/dot-release.sh
-  .tooling/bin/dot-release-push.sh
-  .tooling/bin/dot-release-token.sh
-  .tooling/bin/lib/dot-release.sh
-)
-RELEASE_STUBS=(release.conf.stub release.exclude.stub .env.stub)
+ENV_EXAMPLE="$DOTDOT_DIR/.core/.env.example"
+RELEASE_SETTINGS_STUB="$DOTDOT_DIR/.core/modules/release/stubs/env.stub"
 TEMP_PREFIX=".dot-install."
 REQUIRED_COMMANDS=(curl tar gzip mktemp ln mv)
-SPINNER_FRAMES='|/-\'
-SPINNER_DELAY=0.1
+# dotdot's spinner: one frame every SPINNER_INTERVAL seconds.
+SPINNER_FRAMES=(' ·●' ' •⏺' ' ⏺•' ' ●·' ' ⏺•' ' •⏺' ' ·●')
+SPINNER_INTERVAL=0.07
 
 main() {
   local GREEN="" RED="" YELLOW="" BOLD="" RESET=""
@@ -55,16 +45,13 @@ main() {
   log="$temp/log"
   spin "Downloading $name..." download_and_unpack
   local source
-  source=$(find_source "$temp/tree") || fail "The download holds no dotdot ($SOURCE_DIR/$PATHS_LIB is missing)."
+  source=$(find_source "$temp/tree") || fail "The download holds no dotdot ($SOURCE_DIR/$BOOT_FILE is missing)."
 
   printf 'Getting %s ready for your project...\n' "$name"
-  local release=false
-  ask "Do you want the release features?" && release=true
   check_destination
-  mv -- "$source" "$base/$DOTDOT_DIR" || fail "Could not place dotdot at $base/$DOTDOT_DIR."
+  mv -- "$source/$SOURCE_DIR" "$base/$DOTDOT_DIR" || fail "Could not place dotdot at $base/$DOTDOT_DIR."
   record_version "$temp/dotdot.tar.gz"
-  $release || drop_release
-  seed_stubs
+  seed_settings
   ln -s -- "$ENTRY_POINT" "$base/$ENTRY_LINK" || fail "Could not link $base/$ENTRY_LINK."
   quietly "Sync" bash "$base/$ENTRY_LINK" sync -y
   quietly "Checking bash $ENTRY_LINK" bash "$base/$ENTRY_LINK"
@@ -72,22 +59,14 @@ main() {
   printf '\n%s✓ %s is ready!%s\n\n' "$GREEN" "$name$GREEN" "$RESET"
   printf "To finish, just tell your coding agent you're using %s; it will take it from there.\n" "$name"
   printf "Or manually fill in your project's context in %s%s/%s.\n" "$BOLD" "$DOTDOT_DIR" "$RESET"
-  printf '\nTip: run %sbash %s%s to see the available commands.\n' "$BOLD" "$ENTRY_LINK" "$RESET"
+  printf '\nUsing Claude Code? Add its harness: %sbash %s plugins:add dotdot-sh/claude-code%s\n' "$BOLD" "$ENTRY_LINK" "$RESET"
+  printf 'Tip: run %sbash %s%s to see the available commands.\n' "$BOLD" "$ENTRY_LINK" "$RESET"
   printf '\n%s🚀 Build something amazing!%s\n\n' "$BOLD" "$RESET"
 }
 
 fail() {
   printf '%s❌ %s%s\n\n' "$RED" "$*" "$RESET" >&2
   exit 1
-}
-
-# Asks question $1 on the terminal, even when this script came through a
-# pipe, and succeeds on y or yes. No terminal, or Enter, means no.
-ask() {
-  local reply=""
-  { : </dev/tty; } 2>/dev/null || return 1
-  read -r -p "$1 [y/N] " reply </dev/tty || return 1
-  [[ $reply =~ ^[Yy]([Ee][Ss])?$ ]]
 }
 
 # Runs "$@" with its output kept in $log, shown only if it fails as step $1.
@@ -101,16 +80,6 @@ quietly() {
   fi
 }
 
-# Removes the release commands and their stubs, so nothing of them is seeded.
-drop_release() {
-  local file
-  for file in "${RELEASE_FILES[@]}"; do
-    rm -f -- "$base/$DOTDOT_DIR/$file"
-  done
-  for file in "${RELEASE_STUBS[@]}"; do
-    rm -f -- "$base/$STUBS_DIR/$file"
-  done
-}
 
 check_requirements() {
   local command missing=()
@@ -142,14 +111,15 @@ download_and_unpack() {
 # Prints label $1, with a spinner after it on a terminal while "$@" runs in
 # the background; its output is kept in $log and shown only if it fails.
 spin() {
-  local label="$1" pid frame=0
+  local label="$1" pid tick=0
   shift
   "$@" >"$log" 2>&1 &
   pid=$!
   if [ -t 1 ]; then
     while kill -0 "$pid" 2>/dev/null; do
-      printf '\r%s %s' "$label" "${SPINNER_FRAMES:frame++%${#SPINNER_FRAMES}:1}"
-      sleep "$SPINNER_DELAY"
+      printf '\r%s%s ' "$label" "${SPINNER_FRAMES[$((tick % ${#SPINNER_FRAMES[@]}))]}"
+      tick=$((tick + 1))
+      sleep "$SPINNER_INTERVAL"
     done
     printf '\r\033[K'
   fi
@@ -161,13 +131,13 @@ spin() {
   fi
 }
 
-# Prints dotdot's source folder inside the unpacked archive, whose single
-# top-level folder is named after the repo and branch.
+# Prints the unpacked archive's single top-level folder, named after the repo
+# and branch, which holds dotdot's source.
 find_source() {
   local top
   for top in "$1"/*/; do
-    if [ -f "$top$SOURCE_DIR/$PATHS_LIB" ]; then
-      printf '%s\n' "${top%/}/$SOURCE_DIR"
+    if [ -f "$top$SOURCE_DIR/$BOOT_FILE" ]; then
+      printf '%s\n' "${top%/}"
       return
     fi
   done
@@ -187,27 +157,14 @@ record_version() {
   fi
 }
 
-# "<name>.stub" becomes "<name>" in the project root, skipped when that file
-# already exists; ".env.stub" is appended to dotdot's .env instead.
-seed_stubs() {
-  local stub name target
-  [ -d "$base/$STUBS_DIR" ] || return 0
-  for stub in "$base/$STUBS_DIR"/*.stub "$base/$STUBS_DIR"/.*.stub; do
-    [ -f "$stub" ] || continue
-    name=$(basename -- "$stub" .stub)
-    target="$base/$name"
-    if [ "$name" = "$ENV_STUB_NAME" ]; then
-      target="$base/$ENV_FILE"
-      if [ -s "$target" ] && [ -n "$(tail -c 1 -- "$target")" ]; then
-        printf '\n' >> "$target"
-      fi
-      cat -- "$stub" >> "$target" \
-        || printf '%s❌ Could not add %s to %s%s\n' "$RED" "$(basename -- "$stub")" "$target" "$RESET"
-    elif [ -e "$target" ] || [ -L "$target" ]; then
-      printf '%s⚠️  Kept the existing %s; compare it with %s%s\n' "$YELLOW" "$target" "$stub" "$RESET"
-    else
-      cp -- "$stub" "$target" || printf '%s❌ Could not create %s%s\n' "$RED" "$target" "$RESET"
-    fi
+# Starts dotdot's git-ignored .env, readable only by the user, from dotdot's
+# defaults, then the release settings, empty, to fill in when they release.
+seed_settings() {
+  local file
+  for file in "$ENV_EXAMPLE" "$RELEASE_SETTINGS_STUB"; do
+    [ -f "$base/$file" ] || continue
+    (umask 077 && { cat -- "$base/$file"; printf '\n'; } >> "$base/$ENV_FILE" && chmod 600 "$base/$ENV_FILE") \
+      || printf '%s⚠️  Could not create %s.%s\n' "$YELLOW" "$ENV_FILE" "$RESET"
   done
 }
 

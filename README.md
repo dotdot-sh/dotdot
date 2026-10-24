@@ -50,9 +50,9 @@ dotdot is an opinionated starting point, not a long-term dependency. A one-time 
 
 ## Supported Settings
 
-Although the core content is harness-agnostic, dotdot includes configurations for these platforms:
+What gets linked where is yours to decide in `.dot/sync.map` (`origin::destination` per line): by default `AGENTS.md` into the project root and each of dotdot's skills into `.claude/skills/`, one line each, plus a block every plugin adds. A harness plugin wires it into a coding agent, linking every skill and agent into the harness's directories and the docs where the harness reads them:
 
-- [x] Claude Code
+- [x] Claude Code — `bash dot plugins:add dotdot-sh/claude-code` (source in this repo's `plugins/claude-code/`)
 - [ ] OpenCode
 - [ ] Codex
 - [ ] Copilot
@@ -60,28 +60,93 @@ Although the core content is harness-agnostic, dotdot includes configurations fo
 
 ## `dot` command
 
-The `dot` at your project root is dotdot's handy command line. It gives you and your agents a straightforward way to manage common dotdot actions such as creating tasks, notes and decisions, scans docs, finds code references, and syncs or updates dotdot itself. Run `bash dot` to list the available commands, and pass `--help` to each to learn more about their usage.
+The `dot` at your project root is dotdot's handy command line. It gives you and your agents a straightforward way to manage common dotdot actions such as creating notes, features, decisions, and tasks, scanning docs, managing plugins, and syncing or updating dotdot itself. Run `bash dot` to list the available commands, and pass `--help` to each to learn more about their usage.
 
 > **Tip:** To run the command simply as `dot` instead of `bash dot`, consider adding `dot() { bash dot "$@"; }` to your shell.
 
 Examples:
 ```sh
-dot sync                       # relink dotdot into your harness after adding or renaming skills
-dot note --slug "Cache idea"   # creates a new note in .dot/Notes/ to explore your idea
-dot task:list                  # list the project's tasks tracked in your configured provider
+dot sync                               # link what .dot/sync.map lists into your harness, after adding or renaming skills
+dot notes:create --slug "Cache idea"   # a new note in .dot/Notes/
+dot tasks:list                         # the project's tasks
 ```
 
-## Kits
+## Plugins
 
-dotdot's core is stack-agnostic. A kit adds the context, skills, agents, and commands of one stack or tool (Laravel, Svelte, an SDK). Kits live in their own GitHub repos, public or private (with `gh` logged in or `GH_TOKEN` in `.dot/.env`), and are listed in the [dotdot-kits](https://github.com/dotdot-sh/dotdot-kits) registry.
+dotdot ships with what it needs: notes, feature specifications, decisions, tasks, releases, and Claude Code settings are all part of its core. A plugin adds more, from any GitHub repo you choose: there is no catalog, and nobody vets plugins for you.
 
 ```sh
-bash dot kit:add laravel                      # from the registry
-bash dot kit:add https://github.com/acme/dotdot-kit-svelte@v1.0.0
-bash dot kit:update                           # every installed kit
+bash dot plugins:add acme/laravel           # github.com/acme/laravel, its dotdot/ folder
+bash dot plugins:add acme/svelte@v1.0.0     # at a branch, tag, or commit
+bash dot plugins:update                     # every installed plugin, each reviewed again
+bash dot plugins:remove acme/laravel
 ```
 
-A kit's context goes into dotdot's top-level docs: into the doc with the same name, between `<!-- <kit>/<File> -->` markers, or else as a new `<File>-<kit>.md`. Map it elsewhere with `.dot/.tooling/conf/kitsmap.conf` lines such as `laravel/GUIDELINES.md:STANDARDS.md`. Its commands run as `bash dot <kit>:<command>`. Updates and removals just apply; review them with `git diff`.
+A plugin is code and instructions from its author. It can run anything on your machine and steer your agents, so every add and update shows a warning and the full list of what changes (scripts flagged), and goes ahead only when you confirm at a terminal; `--yes` skips the question but still needs a terminal, so no agent or script can add or update a plugin. dotdot never runs plugin code while adding it.
+
+Only the repo's `dotdot/` folder is installed, into `.dot/.plugins/<owner>/<name>/`. Its commands run as `bash dot <owner>:<command>`; a plugin whose owner is one of dotdot's own command names, or whose commands another plugin already has, is refused, its skills and agents must be named `<name>-…`, and nothing it links may clash with what dotdot or an earlier plugin links. Its context goes into dotdot's top-level docs: into the doc with the same name, between `<!-- <owner>/<name>/<File> -->` markers, or else as a new `<File>-<owner>-<name>.md` (map it elsewhere with `.dot/.plugins/pluginsmap.conf` lines such as `acme/laravel/GUIDELINES.md:STANDARDS.md`). Removing a plugin removes its context regions and the docs it created; the records, seeded files, and plugin data it leaves are listed for you to review.
+
+### GitHub identity
+
+Plugins and the tasks kept as GitHub issues use your `gh` login by default. To run them as another account for this project only, such as a team bot, put a token in dotdot's git-ignored `.dot/.env` as `GH_TOKEN`.
+
+dotdot hands it to every `gh` call it makes, and to its direct GitHub downloads, so they act as the token's owner whatever account `gh auth` is logged in as; your own shell's `gh` is unaffected. The token's scopes limit what dotdot can do (private downloads and issues need repository access, creating labels needs write access). It covers github.com only.
+
+### Writing a plugin
+
+`bash dot plugins:new <owner>/<name>` scaffolds a repo. Everything dotdot installs lives in its `dotdot/` folder; the rest of the repo is yours:
+
+- `dotdot/plugin.conf` — `REQUIRES` (the plugin API), `DESCRIPTION`, `DEPENDS` (binaries or `framework.integrations.<name>`, reported but never installed), `DIRECTORIES` (records directories it keeps, such as `Recipes`), and for a harness plugin `HARNESS_SKILLS` / `HARNESS_AGENTS` (where every dotdot and plugin skill and agent is linked, such as `.claude/skills`) and `LINKS` (`<origin>::<destination>` pairs, comma-separated: a path in the plugin, or `@<Doc>.md` for one of dotdot's top-level docs, linked to a project path outside `.dot/` and `.git/`).
+- `dotdot/commands/*.sh` — commands, run as `bash dot <owner>:<command>` (`commands/db/seed.sh` is `<owner>:db:seed`).
+- `dotdot/context/*.md` — merged into dotdot's docs as described above.
+- `dotdot/skills/`, `dotdot/agents/` — each entry named `<name>-…`, linked by `bash dot sync` into every harness directory a harness plugin declares.
+- `dotdot/stubs/<path>.stub` — seeds `<path>` in the project when missing; `stubs/env.stub` declares the plugin's settings and adds the ones `.dot/.env` lacks. Every setting a plugin declares, reads, or saves is named `<OWNER>__<NAME>__…` (`ACME__WIDGETS__API_KEY` for `acme/widgets`), so it can't touch dotdot's or another plugin's.
+- Anything else, organized as you like, loaded with `dot::use plugins.<owner>.<name>.<path>`.
+
+Try it locally with `bash dot plugins:add <owner>/<name> --from ./<repo-directory>`, then publish it as `github.com/<owner>/<name>`.
+
+A command declares a `DESCRIPTION`, a `usage` function for its `--help`, and a `handle` function that receives the arguments:
+
+```bash
+#!/usr/bin/env bash
+
+DESCRIPTION="Seed the database."
+
+dot::use framework.console.args framework.console.output
+
+usage() {
+  framework.console.output::line "bash dot $DOT_COMMAND [--fresh]"
+}
+
+handle() {
+  [ $# -le 1 ] || framework.console.args::unexpected "$2"
+  framework.console.output::success "Seeded."
+}
+```
+
+Plugin code may use, and only use:
+
+- `dot::use`, `dot::path project|dotdot|plugin`, `dot::config` (a setting from `.dot/.env`; unset stops with how to set it), `dot::optional_config` (the same, or nothing), `dot::save_config`, `dot::relative`, `dot::call`, `dot::raise`, `dot::abort`, `dot::on_exit`.
+- `framework.helpers.*` — `fs`, `text`, `kv`, `date`, `frontmatter`, `template`, `record`, `json`, `net`, `emoji`.
+- `framework.console.*` — `output`, `prompt`, `terminal`, `args`.
+- `framework.integrations.<name>.service` — `github-api`, `github-cli`.
+- its own `plugins.<owner>.<name>.*`.
+
+`dot::use` refuses anything else (dotdot's `core.*` modules, any `internal` part of a framework module, another plugin), and every function is named after its module: `framework.console.output::success`, `plugins.acme.laravel.db::seed`.
+
+## Structure
+
+- `.dot/*.md` and `.dot/Features/`, `Decisions/`, `Tasks/`, `Notes/` — the project's context and records, owned by the project.
+- `.dot/sync.map` — every link `bash dot sync` makes, created from dotdot's default at install; a block per plugin, written from its `plugin.conf` when added and dropped when removed. Edit it freely; `bash dot sync --refresh <owner>/<name>` rewrites a plugin's block.
+- `.dot/.core/` — dotdot itself, refreshed by `bash dot update`:
+  - `system/` — what dotdot needs to run: `bin/dot`, `boot.sh` (module loading and the `dot::` API, the only API plugins may use), `kernel.sh` (the command registry, listing, and dispatch), `paths.sh`, and `plugins`, `sync`, `update`, loaded as `core.system.<part>.*`.
+  - `modules/` — what dotdot can do: `onboarding`, `ready`, `frontmatter`, `housekeeping`, `notes`, `features`, `decisions`, `tasks`, `release`, each with its commands and skills, loaded as `core.modules.<module>.*`.
+  - `framework/` — the only shared code, loaded as `framework.*` by the system, the modules, and plugins alike: `helpers/` (project-agnostic building blocks), `console/` (command-line input and output), and `integrations/` (external services, each exposing only `service.sh`; its `internal/` parts load only from inside that integration).
+  - `.env.example` (dotdot's settings with their defaults, which the installer starts `.dot/.env` from; never read at run time), `version` (the commit installed), and `dotdot_ready` (set once the context is prepared); `bash dot update` keeps the last two.
+  - Every system part and module loads only from inside its own folder.
+- `.dot/.plugins/<owner>/<name>/` — installed plugins, with `plugins.lock`. A plugin writes nothing outside its folder but its stubs, its settings in `.dot/.env`, and the project records it declares (`DIRECTORIES`).
+
+Everything runs on bash 3.2+ with standard Unix tools (macOS included).
 
 ## Agents Brevity Flags
 

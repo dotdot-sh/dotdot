@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+if [ -z "${BASH_VERSION-}" ]; then
+  echo "❌ dotdot runs on bash: bash dot $*" >&2
+  exit 1
+fi
+
+set -euo pipefail
+
+dot_self="$0"
+dot_hops=0
+while [ -L "$dot_self" ] && [ "$dot_hops" -lt 40 ]; do
+  dot_hops=$((dot_hops + 1))
+  dot_link=$(readlink "$dot_self")
+  case "$dot_link" in
+    /*) dot_self="$dot_link" ;;
+    *) dot_self="$(dirname -- "$dot_self")/$dot_link" ;;
+  esac
+done
+
+. "$(dirname -- "$dot_self")/../boot.sh"
+unset dot_self dot_hops dot_link
+
+kernel::handle "$@"; exit

@@ -1,0 +1,24 @@
+# What `bash dot sync` links into the project: one origin::destination per line,
+# destinations relative to the project, outside .dot/ and .git/. The first line
+# naming a destination takes precedense.
+#
+# Origin shortcuts:
+#   @AGENTS.md                      One of dotdot's top-level docs
+#   @dotdotSkills, @dotdotAgents    Each of dotdot's skills and agents, linked one
+#                                   by one into the destination directory
+#   @pluginsSkills, @pluginsAgents  The same for every plugin's skills/ and agents/
+#   @module.<name>.<path>           A path in a dotdot module: @module.notes.skills
+#   @plugin.<owner>.<name>.<path>   A path in a plugin: @plugin.acme.tools.skills
+#   <path>                          A path in dotdot; in a plugin's block, in that plugin
+#
+# Origin linking types:
+#   ending with <destination>       Links it as is (a file, or a whole directory)
+#   ending with /*                  Links each entry inside individually
+#   starting with !                 Removes the link and keeps it unlinked
+#
+# Each plugin gets a block, written from its plugin.conf when it is added and
+# dropped when it is removed; `bash dot sync --refresh <owner>/<name>` (and
+# `plugins:update`) writes it afresh.
+
+@AGENTS.md::AGENTS.md
+@dotdotSkills::.claude/skills/
